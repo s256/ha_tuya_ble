@@ -40,7 +40,10 @@ from .const import (
     CONF_ACCESS_SECRET,
     CONF_APP_TYPE,
     CONF_AUTH_TYPE,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
     CONF_ENDPOINT,
+    CONF_PRODUCT_NAME,
     DOMAIN,
 )
 from .devices import TuyaBLEData, get_device_readable_name
@@ -158,6 +161,7 @@ class TuyaBLEOptionsFlow(OptionsFlowWithConfigEntry):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
+        self._entry: TuyaBLEData | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -175,34 +179,82 @@ class TuyaBLEOptionsFlow(OptionsFlowWithConfigEntry):
         address: str | None = self.config_entry.data.get(CONF_ADDRESS)
 
         if user_input is not None:
-            entry: TuyaBLEData | None = None
             domain_data = self.hass.data.get(DOMAIN)
             if domain_data:
-                entry = domain_data.get(self.config_entry.entry_id)
-            if entry:
+                self._entry = domain_data.get(self.config_entry.entry_id)
+            if self._entry:
                 login_data = await _try_login(
-                    entry.manager,
+                    self._entry.manager,
                     user_input,
                     errors,
                     placeholders,
                 )
                 if login_data:
-                    credentials = await entry.manager.get_device_credentials(
+                    credentials = await self._entry.manager.get_device_credentials(
                         address, True, True
                     )
                     if credentials:
                         return self.async_create_entry(
                             title=self.config_entry.title,
-                            data=entry.manager.data,
+                            data=self._entry.manager.data,
                         )
 
-                    errors["base"] = "device_not_registered"
+                    return await self.async_step_pick_cloud_device()
 
         if user_input is None:
             user_input = {}
             user_input.update(self.config_entry.options)
 
         return _show_login_form(self, user_input, errors, placeholders)
+
+    async def async_step_pick_cloud_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle manual cloud device selection when MAC lookup fails."""
+        errors: dict[str, str] = {}
+        address: str | None = self.config_entry.data.get(CONF_ADDRESS)
+
+        if user_input is not None and self._entry:
+            device_id = user_input[CONF_DEVICE_ID]
+            if self._entry.manager.associate_credentials(address, device_id):
+                credentials = await self._entry.manager.get_device_credentials(
+                    address, False, True
+                )
+                if credentials:
+                    return self.async_create_entry(
+                        title=self.config_entry.title,
+                        data=self._entry.manager.data,
+                    )
+            errors["base"] = "device_not_registered"
+
+        if self._entry:
+            all_credentials = self._entry.manager.get_all_cached_credentials()
+        else:
+            all_credentials = {}
+
+        if not all_credentials:
+            return self.async_abort(reason="device_not_registered")
+
+        device_options = {
+            creds[
+                CONF_DEVICE_ID
+            ]: f"{creds.get(CONF_DEVICE_NAME, 'Unknown')} ({creds.get(CONF_PRODUCT_NAME, creds.get(CONF_DEVICE_ID))})"
+            for creds in all_credentials.values()
+            if CONF_DEVICE_ID in creds
+        }
+
+        if not device_options:
+            return self.async_abort(reason="device_not_registered")
+
+        return self.async_show_form(
+            step_id="pick_cloud_device",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_DEVICE_ID): vol.In(device_options),
+                },
+            ),
+            errors=errors,
+        )
 
 
 class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -218,6 +270,7 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
         self._data: dict[str, Any] = {}
         self._manager: HASSTuyaBLEDeviceManager | None = None
         self._get_device_info_error = False
+        self._ble_address: str | None = None
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -300,7 +353,8 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data[CONF_ADDRESS] = discovery_info.address
             if credentials is None:
                 self._get_device_info_error = True
-                errors["base"] = "device_not_registered"
+                self._ble_address = discovery_info.address
+                return await self.async_step_pick_cloud_device()
             else:
                 return self.async_create_entry(
                     title=local_name,
@@ -347,6 +401,57 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
                             for service_info in self._discovered_devices.values()
                         }
                     ),
+                },
+            ),
+            errors=errors,
+        )
+
+    async def async_step_pick_cloud_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle manual cloud device selection when MAC lookup fails."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            device_id = user_input[CONF_DEVICE_ID]
+            if self._manager.associate_credentials(self._ble_address, device_id):
+                credentials = await self._manager.get_device_credentials(
+                    self._ble_address, False, True
+                )
+                if credentials:
+                    discovery_info = self._discovered_devices[self._ble_address]
+                    local_name = await get_device_readable_name(
+                        discovery_info, self._manager
+                    )
+                    return self.async_create_entry(
+                        title=local_name,
+                        data={CONF_ADDRESS: self._ble_address},
+                        options=self._data,
+                    )
+            errors["base"] = "device_not_registered"
+
+        all_credentials = self._manager.get_all_cached_credentials()
+        if not all_credentials:
+            errors["base"] = "device_not_registered"
+            return await self.async_step_device()
+
+        device_options = {
+            creds[
+                CONF_DEVICE_ID
+            ]: f"{creds.get(CONF_DEVICE_NAME, 'Unknown')} ({creds.get(CONF_PRODUCT_NAME, creds.get(CONF_DEVICE_ID))})"
+            for creds in all_credentials.values()
+            if CONF_DEVICE_ID in creds
+        }
+
+        if not device_options:
+            errors["base"] = "device_not_registered"
+            return await self.async_step_device()
+
+        return self.async_show_form(
+            step_id="pick_cloud_device",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_DEVICE_ID): vol.In(device_options),
                 },
             ),
             errors=errors,
