@@ -1217,6 +1217,19 @@ class TuyaBLEDevice:
         )
         return (timestamp, end_pos)
 
+    def _parse_datapoint_value(
+        self, type: TuyaBLEDataPointType, raw_value: bytes
+    ) -> Any:
+        match type:
+            case TuyaBLEDataPointType.DT_RAW | TuyaBLEDataPointType.DT_BITMAP:
+                return raw_value
+            case TuyaBLEDataPointType.DT_BOOL:
+                return int.from_bytes(raw_value, "big") != 0
+            case TuyaBLEDataPointType.DT_VALUE | TuyaBLEDataPointType.DT_ENUM:
+                return int.from_bytes(raw_value, "big", signed=True)
+            case TuyaBLEDataPointType.DT_STRING:
+                return raw_value.decode()
+
     def _parse_datapoints_v3(
         self, timestamp: float, flags: int, data: bytes, start_pos: int
     ) -> int:
@@ -1237,15 +1250,43 @@ class TuyaBLEDevice:
             if next_pos > len(data):
                 raise TuyaBLEDataLengthError()
             raw_value = data[pos:next_pos]
-            match type:
-                case TuyaBLEDataPointType.DT_RAW | TuyaBLEDataPointType.DT_BITMAP:
-                    value = raw_value
-                case TuyaBLEDataPointType.DT_BOOL:
-                    value = int.from_bytes(raw_value, "big") != 0
-                case TuyaBLEDataPointType.DT_VALUE | TuyaBLEDataPointType.DT_ENUM:
-                    value = int.from_bytes(raw_value, "big", signed=True)
-                case TuyaBLEDataPointType.DT_STRING:
-                    value = raw_value.decode()
+            value = self._parse_datapoint_value(type, raw_value)
+
+            _LOGGER.debug(
+                "%s: Received datapoint update, id: %s, type: %s: value: %s",
+                self.address,
+                id,
+                type.name,
+                value,
+            )
+            self._datapoints._update_from_device(id, timestamp, flags, type, value)
+            datapoints.append(self._datapoints[id])
+            pos = next_pos
+
+        self._fire_callbacks(datapoints)
+
+    def _parse_datapoints_v4(
+        self, timestamp: float, flags: int, data: bytes, start_pos: int
+    ) -> None:
+        """Parse V4 datapoints which use 2-byte length fields."""
+        datapoints: list[TuyaBLEDataPoint] = []
+
+        pos = start_pos
+        while len(data) - pos >= 5:
+            id: int = data[pos]
+            pos += 1
+            _type: int = data[pos]
+            if _type > TuyaBLEDataPointType.DT_BITMAP.value:
+                raise TuyaBLEDataFormatError()
+            type: TuyaBLEDataPointType = TuyaBLEDataPointType(_type)
+            pos += 1
+            data_len: int = int.from_bytes(data[pos : pos + 2], "big")
+            pos += 2
+            next_pos = pos + data_len
+            if next_pos > len(data):
+                raise TuyaBLEDataLengthError()
+            raw_value = data[pos:next_pos]
+            value = self._parse_datapoint_value(type, raw_value)
 
             _LOGGER.debug(
                 "%s: Received datapoint update, id: %s, type: %s: value: %s",
@@ -1361,8 +1402,8 @@ class TuyaBLEDevice:
                     self.address,
                     data.hex(),
                 )
-                # V4 datapoints have a 7-byte prefix before standard DP fields
-                self._parse_datapoints_v3(time.time(), 0, data, 7)
+                # V4 datapoints: 7-byte prefix, then DP fields with 2-byte length
+                self._parse_datapoints_v4(time.time(), 0, data, 7)
                 asyncio.create_task(self._send_response(code, bytes(0), seq_num))
 
             case TuyaBLECode.FUN_RECEIVE_TIME_DP_V4:
@@ -1371,8 +1412,8 @@ class TuyaBLEDevice:
                     self.address,
                     data.hex(),
                 )
-                # V4 time datapoints have a 7-byte prefix before standard DP fields
-                self._parse_datapoints_v3(time.time(), 0, data, 7)
+                # V4 time datapoints: 7-byte prefix, then DP fields with 2-byte length
+                self._parse_datapoints_v4(time.time(), 0, data, 7)
                 asyncio.create_task(self._send_response(code, bytes(0), seq_num))
 
         if response_to != 0:
