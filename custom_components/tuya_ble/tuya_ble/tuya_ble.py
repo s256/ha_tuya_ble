@@ -813,10 +813,17 @@ class TuyaBLEDevice:
 
                 if self._client and self._client.is_connected:
                     _LOGGER.debug("%s: Sending device info request", self.address)
+                    # Devices with alternative characteristics need a
+                    # 2-byte payload for the device info request
+                    device_info_data = (
+                        bytes([0x00, 0xF3])
+                        if self._char_notify == CHARACTERISTIC_NOTIFY_ALT
+                        else bytes(0)
+                    )
                     try:
                         if not await self._send_packet_while_connected(
                             TuyaBLECode.FUN_SENDER_DEVICE_INFO,
-                            bytes(0),
+                            device_info_data,
                             0,
                             True,
                         ):
