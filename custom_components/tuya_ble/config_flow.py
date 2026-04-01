@@ -21,6 +21,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import (
     CONF_ADDRESS,
     CONF_COUNTRY_CODE,
+    CONF_DEVICE_ID,
     CONF_PASSWORD,
     CONF_USERNAME,
 )
@@ -40,7 +41,6 @@ from .const import (
     CONF_ACCESS_SECRET,
     CONF_APP_TYPE,
     CONF_AUTH_TYPE,
-    CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_ENDPOINT,
     CONF_PRODUCT_NAME,
