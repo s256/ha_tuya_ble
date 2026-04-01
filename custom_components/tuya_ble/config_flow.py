@@ -77,6 +77,7 @@ async def _try_login(
         CONF_COUNTRY_CODE: country.country_code,
     }
 
+    first_success: dict[str, Any] | None = None
     for app_type in (TUYA_SMART_APP, SMARTLIFE_APP, ""):
         data[CONF_APP_TYPE] = app_type
         if app_type == "":
@@ -87,7 +88,11 @@ async def _try_login(
         response = await manager._login(data, True)
 
         if response.get(TUYA_RESPONSE_SUCCESS, False):
-            return data
+            if first_success is None:
+                first_success = data.copy()
+
+    if first_success is not None:
+        return first_success
 
     errors["base"] = "login_error"
     if response:
