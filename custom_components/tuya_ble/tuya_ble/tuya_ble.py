@@ -28,7 +28,9 @@ from Crypto.Cipher import AES
 
 from .const import (
     CHARACTERISTIC_NOTIFY,
+    CHARACTERISTIC_NOTIFY_ALT,
     CHARACTERISTIC_WRITE,
+    CHARACTERISTIC_WRITE_ALT,
     GATT_MTU,
     MANUFACTURER_DATA_ID,
     RESPONSE_WAIT_TIMEOUT,
@@ -309,6 +311,9 @@ class TuyaBLEDevice:
         self._session_key: bytes | None = None
 
         self._is_paired = False
+
+        self._char_notify = CHARACTERISTIC_NOTIFY
+        self._char_write = CHARACTERISTIC_WRITE
 
         self._input_buffer: bytearray | None = None
         self._input_expected_packet_num = 0
@@ -684,7 +689,7 @@ class TuyaBLEDevice:
             self._expected_disconnect = True
             self._client = None
             if client and client.is_connected:
-                await client.stop_notify(CHARACTERISTIC_NOTIFY)
+                await client.stop_notify(self._char_notify)
                 await client.disconnect()
         async with self._seq_num_lock:
             self._current_seq_num = 1
@@ -769,9 +774,31 @@ class TuyaBLEDevice:
                                 char.properties,
                             )
 
+                    # Detect alternative characteristic UUIDs
+                    char_uuids = {
+                        char.uuid
+                        for service in client.services
+                        for char in service.characteristics
+                    }
+                    if CHARACTERISTIC_NOTIFY not in char_uuids:
+                        if CHARACTERISTIC_NOTIFY_ALT in char_uuids:
+                            _LOGGER.debug(
+                                "%s: Using alternative BLE characteristics",
+                                self.address,
+                            )
+                            self._char_notify = CHARACTERISTIC_NOTIFY_ALT
+                            self._char_write = CHARACTERISTIC_WRITE_ALT
+                        else:
+                            _LOGGER.error(
+                                "%s: No compatible notify characteristic found",
+                                self.address,
+                            )
+                            self._client = None
+                            continue
+
                     try:
                         await self._client.start_notify(
-                            CHARACTERISTIC_NOTIFY, self._notification_handler
+                            self._char_notify, self._notification_handler
                         )
                     except:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
                         self._client = None
@@ -1123,7 +1150,7 @@ class TuyaBLEDevice:
                 try:
                     # _LOGGER.debug("%s: Sending packet: %s", self.address, packet.hex())
                     await self._client.write_gatt_char(
-                        CHARACTERISTIC_WRITE,
+                        self._char_write,
                         packet,
                         False,
                     )
