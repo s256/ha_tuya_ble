@@ -1355,6 +1355,26 @@ class TuyaBLEDevice:
                 data = pack(">HBB", dp_seq_num, flags, 0)
                 asyncio.create_task(self._send_response(code, data, seq_num))
 
+            case TuyaBLECode.FUN_RECEIVE_DP_V4:
+                _LOGGER.debug(
+                    "%s: FUN_RECEIVE_DP_V4 raw data: %s",
+                    self.address,
+                    data.hex(),
+                )
+                # V4 datapoints have a 7-byte prefix before standard DP fields
+                self._parse_datapoints_v3(time.time(), 0, data, 7)
+                asyncio.create_task(self._send_response(code, bytes(0), seq_num))
+
+            case TuyaBLECode.FUN_RECEIVE_TIME_DP_V4:
+                _LOGGER.debug(
+                    "%s: FUN_RECEIVE_TIME_DP_V4 raw data: %s",
+                    self.address,
+                    data.hex(),
+                )
+                # V4 time datapoints have a 7-byte prefix before standard DP fields
+                self._parse_datapoints_v3(time.time(), 0, data, 7)
+                asyncio.create_task(self._send_response(code, bytes(0), seq_num))
+
         if response_to != 0:
             future = self._input_expected_responses.pop(response_to, None)
             if future:
