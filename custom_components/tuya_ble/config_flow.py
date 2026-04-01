@@ -228,6 +228,7 @@ class TuyaBLEOptionsFlow(OptionsFlowWithConfigEntry):
             errors["base"] = "device_not_registered"
 
         if self._entry:
+            await self._entry.manager.build_cache()
             all_credentials = self._entry.manager.get_all_cached_credentials()
         else:
             all_credentials = {}
@@ -430,6 +431,7 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
             errors["base"] = "device_not_registered"
 
+        await self._manager.build_cache()
         all_credentials = self._manager.get_all_cached_credentials()
         if not all_credentials:
             errors["base"] = "device_not_registered"
