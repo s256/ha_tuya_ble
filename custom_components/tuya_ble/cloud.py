@@ -260,6 +260,12 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
                     if item and len(item.credentials) == 0:
                         await self._fill_cache_item(item)
 
+        # Fill any cache items that were added by _try_login but not
+        # covered by existing config entries (e.g. during config flow)
+        for item in _cache.values():
+            if item.api and len(item.credentials) == 0:
+                await self._fill_cache_item(item)
+
     def get_login_from_cache(self) -> None:
         global _cache
         for cache_item in _cache.values():
@@ -300,6 +306,14 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
 
             if item:
                 credentials = item.credentials.get(address)
+
+            # Search all cache items if not found in the primary one
+            if credentials is None:
+                for cache_item in _cache.values():
+                    credentials = cache_item.credentials.get(address)
+                    if credentials is not None:
+                        item = cache_item
+                        break
 
         if credentials:
             result = TuyaBLEDeviceCredentials(
