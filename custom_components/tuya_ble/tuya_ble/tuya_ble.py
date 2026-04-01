@@ -751,6 +751,24 @@ class TuyaBLEDevice:
                 if client and client.is_connected:
                     _LOGGER.debug("%s: Connected; RSSI: %s", self.address, self.rssi)
                     self._client = client
+
+                    # Log all discovered GATT services and characteristics
+                    for service in client.services:
+                        _LOGGER.debug(
+                            "%s: Service: %s (%s)",
+                            self.address,
+                            service.uuid,
+                            service.description,
+                        )
+                        for char in service.characteristics:
+                            _LOGGER.debug(
+                                "%s:   Char: %s (%s) props=%s",
+                                self.address,
+                                char.uuid,
+                                char.description,
+                                char.properties,
+                            )
+
                     try:
                         await self._client.start_notify(
                             CHARACTERISTIC_NOTIFY, self._notification_handler
